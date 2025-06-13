@@ -3,7 +3,9 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -26,6 +28,12 @@ var (
 	insensitive bool
 	delimiter   string
 )
+
+type Column struct {
+	col1 string
+	col2 string
+	col3 string
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "gocomm [OPTION]... FILE1 FILE2",
@@ -63,14 +71,21 @@ Examples:
 			Insensitive: insensitive,
 			Delimiter:   delimiter,
 		}
-		_, err := Open(config.File1)
+		reader1, err := Open(config.File1)
 		if err != nil {
-			return err
+			return fmt.Errorf("error opening %s: %w", config.File1, err)
 		}
-		_, err = Open(config.File2)
+		reader2, err := Open(config.File2)
 		if err != nil {
-			return err
+			return fmt.Errorf("error opening %s: %w", config.File2, err)
 		}
+
+		columns, err := CompareLines(reader1, reader2, config)
+		if err != nil {
+			return fmt.Errorf("comparison error: %w", err)
+		}
+
+		PrintColumns(columns, config)
 
 		return nil
 	},
@@ -102,4 +117,74 @@ func Open(fileName string) (*bufio.Reader, error) {
 	}
 	reader := bufio.NewReader(file)
 	return reader, nil
+}
+func CompareLines(reader1, reader2 *bufio.Reader, config Config) ([]Column, error) {
+	var columns []Column
+
+	for {
+		line1, err1 := readLine(reader1)
+		line2, err2 := readLine(reader2)
+
+		if err1 != nil && err1 != io.EOF {
+			return nil, err1
+		}
+		if err2 != nil && err2 != io.EOF {
+			return nil, err2
+		}
+
+		if line1 == "" && line2 == "" {
+			break
+		}
+
+		if config.Insensitive {
+			line1 = strings.ToLower(line1)
+			line2 = strings.ToLower(line2)
+		}
+
+		col := Column{}
+		switch {
+		case line1 == line2:
+			col.col3 = line1
+		case line2 == "":
+			col.col1 = line1
+		case line1 == "":
+			col.col2 = line2
+		default:
+			col.col1 = line1
+			col.col2 = line2
+		}
+
+		columns = append(columns, col)
+	}
+
+	return columns, nil
+}
+
+func readLine(reader *bufio.Reader) (string, error) {
+	line, err := reader.ReadString('\n')
+	return strings.TrimSpace(line), err
+}
+
+func PrintColumns(columns []Column, config Config) {
+    for _, col := range columns {
+        var output strings.Builder
+        
+        if !config.HideCol1 && col.col1 != "" {
+            output.WriteString(col.col1)
+        }
+        output.WriteString(config.Delimiter)
+        
+        if !config.HideCol2 && col.col2 != "" {
+            output.WriteString(col.col2)
+        }
+        output.WriteString(config.Delimiter)
+        
+        if !config.HideCol3 && col.col3 != "" {
+            output.WriteString(col.col3)
+        }
+        
+        if output.Len() > len(config.Delimiter)*2 {
+            fmt.Println(strings.TrimSuffix(output.String(), config.Delimiter))
+        }
+    }
 }
